@@ -11,6 +11,7 @@
 #include "../pcm_equalizer.h"
 #include "../drc_processor.h"
 #include "../buffer/ring_buffer.h"
+#include "../true_peak_limiter.h"
 
 // ============================================================================
 // 解码器事件类型和负载
@@ -175,6 +176,8 @@ struct PcmStreamDecoderContext {
 
     // Float DSP scratch (normalized)
     std::vector<float> dspScratchF;
+
+    TruePeakLimiter limiter;
 
     // Global S32LE max absolute value for stable normalization.
     // This persists across callbacks to prevent volume rollercoasters

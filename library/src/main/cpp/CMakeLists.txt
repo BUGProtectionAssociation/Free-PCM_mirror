@@ -26,6 +26,7 @@ add_library(library SHARED
     audio_decoder.cpp
     pcm_equalizer.cpp
     drc_processor.cpp
+    true_peak_limiter.cpp
 
     # Buffer module
     buffer/ring_buffer.cpp)

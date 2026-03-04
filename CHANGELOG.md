@@ -4,11 +4,26 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)
 
-## [1.0.3] - 2026-03-04
+## [1.0.4] - 2026-03-04
 
 ### 修复
 
-* **WAV S24LE 兼容修复**：修复 `audio/raw` passthrough 模式下 `S24LE (24-bit)` 未被识别、被错误当作 `S16LE` 处理的问题；为保证均衡器（EQ）与 DRC 等后处理能力，24-bit 源将无损扩展为 `S32LE` 输出。感谢 [@Salmon515](https://github.com/Salmon515) 发现问题。
+* **WAV S24LE 格式支持**：修复 `audio/raw` passthrough 模式下 24-bit (`S24LE`) 格式未被正确识别、被降级为 `S16LE` 处理的问题。现在 24-bit 源将无损扩展为 `S32LE` 进行后处理，确保 EQ 与 DRC 等处理链路以完整位深运行，不产生精度损失。感谢 [@Salmon515](https://github.com/Salmon515) 反馈。
+
+* **EQ 处理链路失真优化**：移除原有逐样本 `tanh` 软削波方案，引入 **Auto Preamp + True-Peak Limiter** 处理管线，从根本上解决高位深场景下 EQ 正增益导致的信号过载问题。当 EQ 启用且存在正增益时，预放大量将自动计算并衰减（`preampDb = -(maxPositiveGainDb + 2 dB)`），Limiter 参数为：限幅阈值 `-1.0 dBTP`、4× 过采样、5 ms 前瞻、1 ms 启动、80 ms 释放，在保留瞬态细节的同时有效消除鼓击等宽频带音频的削波失真。
+
+### 优化
+
+* **测试应用音频可视化**：优化为 WebAudio `AnalyserNode` 风格的线性频谱（`fftSize=256`、`128` bins、固定 dB 标尺 + smoothing），并降低 PCM Tap 回调频率以减少 CPU 抖动，整体观感更接近 Web 示例。
+
+---
+
+## [1.0.3] - 2026-02-28
+
+### 新增
+
+* **PCM 解码数据回调**：为 AudioRendererPlayer 新增 PCM Tap 回调支持，可以用于音频分析等
+* **AudioRenderer 创建回调**：允许消费者注册一个在 AudioRenderer 创建时触发的回调，不影响正常播放流程。
 
 ---
 
@@ -32,7 +47,7 @@
 
 * **完整 Seek 支持**：支持前向/回溯跳转，并新增 `seekToAsync()`（针对 URL 场景，等待 post-seek PCM 数据就绪后 resolve）。
 * **API 12+ 写入优化**：`writeData` 支持 `fillForWriteData()` 与 VALID/INVALID 拉取模式，数据不足时不再强制消耗 ring buffer。
-* **自适应 RingBytes**：当不传参数或值  时，系统根据采样率、声道、位宽及音源类型，自动在 64KB~512KB 范围内阶梯式选择最优缓冲区大小。
+* **自适应 RingBytes**：当不传参数或值时，系统根据采样率、声道、位宽及音源类型，自动在 64KB~512KB 范围内阶梯式选择最优缓冲区大小。
 
 ### 变更
 

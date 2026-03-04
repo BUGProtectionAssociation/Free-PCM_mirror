@@ -819,6 +819,10 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         ctx->drc.Init(sr, cc);
         ctx->drc.SetEnabled(ctx->drcEnabled.load());
 
+        ctx->limiter.Init(sr, cc);
+        ctx->limiter.SetEnabled(true);
+        ctx->limiter.SetParams(-1.0f, 5.0f, 1.0f, 80.0f);
+
         ctx->actualSampleRate = sr;
         ctx->actualChannelCount = cc;
         ctx->sourceSampleFormat = sf;
@@ -1128,6 +1132,26 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         }
 
         if (needEq) {
+            float maxPosGainDb = 0.0f;
+            for (size_t c = 0; c < 2; c++) {
+                for (size_t i = 0; i < PcmEqualizer::kBandCount; i++) {
+                    const float g = static_cast<float>(ctx->eqGainsDb100Stereo[c][i].load()) / 100.0f;
+                    if (g > maxPosGainDb) {
+                        maxPosGainDb = g;
+                    }
+                }
+            }
+
+            if (maxPosGainDb > 0.0f) {
+                const float preampDb = -(maxPosGainDb + 2.0f);
+                const float preamp = std::pow(10.0f, preampDb / 20.0f);
+                for (size_t i = 0; i < sampleCount; i++) {
+                    ctx->dspScratchF[i] *= preamp;
+                }
+            }
+        }
+
+        if (needEq) {
             ctx->eq.ProcessFloat(ctx->dspScratchF.data(), frameCount);
         }
 
@@ -1159,11 +1183,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             }
         }
 
-        // Per-sample soft clipper using tanh to avoid pumping artifacts.
-        // This provides smooth saturation instead of block-based gain reduction.
-        for (size_t i = 0; i < sampleCount; i++) {
-            ctx->dspScratchF[i] = std::tanh(ctx->dspScratchF[i]);
-        }
+        ctx->limiter.ProcessFloat(ctx->dspScratchF.data(), frameCount);
 
         if (bytesPerSample == 2) {
             ctx->eqScratch16.resize(sampleCount);

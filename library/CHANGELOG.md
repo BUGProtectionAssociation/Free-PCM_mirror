@@ -9,6 +9,7 @@
 ### 修复
 
 * **WAV S24LE 兼容修复**：修复 `audio/raw` passthrough 模式下 `S24LE (24-bit)` 未被识别、被错误当作 `S16LE` 处理的问题；为保证均衡器（EQ）与 DRC 等后处理能力，24-bit 源将无损扩展为 `S32LE` 输出。感谢 [@Salmon515](https://github.com/Salmon515) 发现问题。
+* **EQ 处理链路失真优化**：移除原有逐样本 `tanh` 软削波方案，引入 **Auto Preamp + True-Peak Limiter** 处理管线，从根本上解决高位深场景下 EQ 正增益导致的信号过载问题。当 EQ 启用且存在正增益时，预放大量将自动计算并衰减（`preampDb = -(maxPositiveGainDb + 2 dB)`），Limiter 参数为：限幅阈值 `-1.0 dBTP`、4× 过采样、5 ms 前瞻、1 ms 启动、80 ms 释放，在保留瞬态细节的同时有效消除鼓击等宽频带音频的削波失真。
 
 ---
 

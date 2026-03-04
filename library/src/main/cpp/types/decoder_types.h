@@ -118,7 +118,7 @@ struct PcmStreamDecoderContext {
     int32_t sampleRate;
     int32_t channelCount;
     int32_t bitrate;
-    int32_t sampleFormat;  // 1=S16LE, 3=S32LE
+    int32_t sampleFormat;
 
     std::atomic<bool> cancel;
     bool success;
@@ -185,6 +185,8 @@ struct PcmStreamDecoderContext {
     size_t ringBytes;
     int32_t actualSampleRate;
     int32_t actualChannelCount;
+    int32_t sourceSampleFormat;
+
     int32_t actualSampleFormat;
 
     // Seek 功能相关

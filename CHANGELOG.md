@@ -4,6 +4,14 @@
 
 格式基于 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.0.0/)
 
+## [1.0.3] - 2026-03-04
+
+### 修复
+
+* **WAV S24LE 兼容修复**：修复 `audio/raw` passthrough 模式下 `S24LE (24-bit)` 未被识别、被错误当作 `S16LE` 处理的问题；为保证均衡器（EQ）与 DRC 等后处理能力，24-bit 源将无损扩展为 `S32LE` 输出。感谢 [@Salmon515](https://github.com/Salmon515) 发现问题。
+
+---
+
 ## [1.0.2] - 2026-02-12
 
 ### 新增

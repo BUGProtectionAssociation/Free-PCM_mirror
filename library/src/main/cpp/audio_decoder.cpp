@@ -533,6 +533,8 @@ bool AudioDecoder::DecodeToPcmStream(const std::string& inputPathOrUri,
         int32_t finalSF = 1;
         if (detectedSampleFormat_ == 3) {
             finalSF = 3;
+        } else if (detectedSampleFormat_ == 2) {
+            finalSF = 2;
         } else if (detectedSampleFormat_ == 1) {
             finalSF = 1;
         } else {
@@ -543,7 +545,7 @@ bool AudioDecoder::DecodeToPcmStream(const std::string& inputPathOrUri,
 
         // For passthrough mode, user-specified sampleFormat is informational only.
         // We must use the source format since no conversion is performed.
-        if (sampleFormat == 1 || sampleFormat == 3) {
+        if (sampleFormat == 1 || sampleFormat == 2 || sampleFormat == 3) {
             if (sampleFormat != finalSF) {
                 OH_LOG_INFO(LOG_APP, "Passthrough mode: user requested sampleFormat=%{public}d but source is %{public}d (using source format, no conversion)", sampleFormat, finalSF);
             }
@@ -658,17 +660,12 @@ bool AudioDecoder::DecodeToPcmStream(const std::string& inputPathOrUri,
     const int32_t finalSampleRate = (sampleRate > 0) ? sampleRate : ((detectedSampleRate_ > 0) ? detectedSampleRate_ : 44100);
     const int32_t finalChannelCount = (channelCount > 0) ? channelCount : ((detectedChannelCount_ > 0) ? detectedChannelCount_ : 2);
 
-    // sampleFormat logic:
-    // - If user specifies 1 (S16LE) or 3 (S32LE), use user's choice
-    // - If user specifies 0 or leaves default, auto-detect from source:
-    //   - Use detectedSampleFormat_ if valid (1 or 3)
-    //   - Otherwise default to S16LE (1)
     int32_t finalSampleFormat = 1;  // Default S16LE
-    if (sampleFormat == 1 || sampleFormat == 3) {
+    if (sampleFormat == 1 || sampleFormat == 2 || sampleFormat == 3) {
         // User explicitly specified format
         finalSampleFormat = sampleFormat;
         OH_LOG_INFO(LOG_APP, "Using user-specified sampleFormat: %{public}d", sampleFormat);
-    } else if (detectedSampleFormat_ == 1 || detectedSampleFormat_ == 3) {
+    } else if (detectedSampleFormat_ == 1 || detectedSampleFormat_ == 2 || detectedSampleFormat_ == 3) {
         // Auto-detect from source track
         finalSampleFormat = detectedSampleFormat_;
         OH_LOG_INFO(LOG_APP, "Auto-detected sampleFormat from source: %{public}d", detectedSampleFormat_);

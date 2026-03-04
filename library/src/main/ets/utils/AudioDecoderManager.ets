@@ -22,7 +22,7 @@ export interface DecodeAudioProgress {
   durationMs: number;
 }
 
-/** PCM 流基本信息 */
+  /** PCM 流基本信息 */
 export interface PcmStreamInfo {
   /** 采样率 (Hz) */
   sampleRate: number;
@@ -30,7 +30,12 @@ export interface PcmStreamInfo {
   channelCount: number;
   /** 采样格式 (如 's16le', 's32le') */
   sampleFormat: string;
-  /** 采样格式编码: 1=S16LE, 3=S32LE */
+  /**
+   * 采样格式编码。
+   *
+   * 说明：解码器可能会对源数据做无损扩展以便启用 DSP（均衡器/DRC）。
+   * 例如：24-bit 源（S24LE）可能会无损扩展为 S32LE 输出。
+   */
   sampleFormatCode: number;
   /** 总时长 (ms) */
   durationMs: number;

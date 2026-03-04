@@ -819,10 +819,15 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         ctx->drc.Init(sr, cc);
         ctx->drc.SetEnabled(ctx->drcEnabled.load());
 
-        // 保存实际音频参数
         ctx->actualSampleRate = sr;
         ctx->actualChannelCount = cc;
-        ctx->actualSampleFormat = sf;
+        ctx->sourceSampleFormat = sf;
+
+        if (sf == 2) {
+            ctx->actualSampleFormat = 3;
+        } else {
+            ctx->actualSampleFormat = sf;
+        }
 
         size_t rb = ctx->ringBytes;
         if (rb == 0) {
@@ -895,7 +900,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         }
 
         // 重新创建 PcmRingBuffer，使用实际的音频参数
-        const int32_t bytesPerSample = (sf == 3) ? 4 : 2; // S32LE=4, S16LE=2
+        const int32_t bytesPerSample = (ctx->actualSampleFormat == 3) ? 4 : 2;
         ctx->ring = std::make_unique<audio::PcmRingBuffer>(rb,
                                                            sr,            // sampleRate
                                                            cc,            // channels
@@ -906,7 +911,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         payload->type = DecoderEventType::Ready;
         payload->sampleRate = sr;
         payload->channelCount = cc;
-        payload->sampleFormat = sf;
+        payload->sampleFormat = ctx->actualSampleFormat;
         payload->durationMs = durMs;
         payload->progress = 0.0;
         payload->ptsMs = 0;
@@ -989,6 +994,35 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         const int32_t volR1000 = ctx->channelVol1000[1].load();
 
         const int32_t ch = ctx->actualChannelCount;
+        
+        if (ctx->sourceSampleFormat == 2) {
+            const size_t sampleCount24 = size / 3;
+            const size_t frameCount24 = (ch > 0) ? (sampleCount24 / static_cast<size_t>(ch)) : 0;
+            const size_t outSamples = frameCount24 * static_cast<size_t>(ch);
+            const size_t bytesToProcess = outSamples * 4;
+            if (frameCount24 == 0 || bytesToProcess == 0) {
+                return true;
+            }
+
+            ctx->eqScratch32.resize(outSamples);
+            const uint8_t* p = pcm;
+            for (size_t i = 0; i < outSamples; i++) {
+                uint32_t u = static_cast<uint32_t>(p[0]) |
+                             (static_cast<uint32_t>(p[1]) << 8) |
+                             (static_cast<uint32_t>(p[2]) << 16);
+                int32_t v = (u & 0x00800000u) ? static_cast<int32_t>(u | 0xFF000000u) : static_cast<int32_t>(u);
+                ctx->eqScratch32[i] = static_cast<int32_t>(static_cast<uint32_t>(v) << 8);
+                p += 3;
+            }
+
+            pcm = reinterpret_cast<const uint8_t*>(ctx->eqScratch32.data());
+            size = bytesToProcess;
+
+            if (ctx->s32GlobalMaxAbs < (1LL << 30)) {
+                ctx->s32GlobalMaxAbs = (1LL << 30);
+            }
+        }
+
         const int32_t sf = ctx->actualSampleFormat;
         const int32_t bytesPerSample = (sf == 3) ? 4 : 2;
         if (bytesPerSample != 2 && bytesPerSample != 4) {
@@ -1349,12 +1383,10 @@ napi_value CreatePcmStreamDecoder(napi_env env, napi_callback_info info) {
             if (napi_get_named_property(env, args[1], "sampleFormat", &v) == napi_ok) {
                 int32_t sf = 0;
                 if (napi_get_value_int32(env, v, &sf) == napi_ok) {
-                    // Accept 0 (auto), 1 (S16LE), or 3 (S32LE)
-                    // Invalid values are treated as auto (0)
                     if (sf == 0 || sf == 1 || sf == 3) {
                         sampleFormat = sf;
                     } else {
-                        sampleFormat = 0;  // Invalid value → auto
+                        sampleFormat = 0;
                     }
                 }
             }
@@ -1445,6 +1477,7 @@ napi_value CreatePcmStreamDecoder(napi_env env, napi_callback_info info) {
     ctx->ringBytes = ringBytes;
     ctx->actualSampleRate = 0;
     ctx->actualChannelCount = 0;
+    ctx->sourceSampleFormat = 0;
     ctx->actualSampleFormat = sampleFormat;
 
     // 使用默认参数临时创建 PcmRingBuffer，稍后在 infoCb 中重新创建

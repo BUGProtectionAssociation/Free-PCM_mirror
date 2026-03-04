@@ -16,6 +16,13 @@ export interface FftSpectrumOptions {
   sampleFormatCode?: number; // 1=S16LE, 3=S32LE
   channelCount?: number;  // default 2
 
+  // WebAudio-style analyser output
+  analyserFftSize?: number;          // default 256 (power of two)
+  analyserMinDecibels?: number;      // default -90
+  analyserMaxDecibels?: number;      // default -10
+  analyserSmoothing?: number;        // default 0.75 (0..1)
+  analyserStride?: number;           // default 2 (downsample PCM push to reduce CPU)
+
   // dynamics tuning
   minRelDb?: number;      // default -55
   gamma?: number;         // default 0.6
@@ -91,6 +98,19 @@ export class FftSpectrumAnalyzer {
   private sampleFormatCode: number;
   private channelCount: number;
 
+  // Web-style analyser state
+  private analyserFftSize: number;
+  private analyserMinDb: number;
+  private analyserMaxDb: number;
+  private analyserSmoothing: number;
+  private analyserStride: number;
+  private analyserWindow: Float32Array;
+  private analyserRe: Float32Array;
+  private analyserIm: Float32Array;
+  private analyserMag: Float32Array;
+  private analyserBins01: Float32Array;
+  private analyserBinsU8: Uint8Array;
+
   // ring buffer of mono float samples
   private ring: Float32Array;
   private ringWrite: number = 0;
@@ -141,6 +161,30 @@ export class FftSpectrumAnalyzer {
     this.sampleFormatCode = options?.sampleFormatCode ?? 1;
     this.channelCount = Math.max(1, Math.min(2, (options?.channelCount ?? 2) | 0));
 
+    this.analyserFftSize = Math.max(256, Math.min(2048, (options?.analyserFftSize ?? 256) | 0));
+    let ap2 = 1;
+    while (ap2 < this.analyserFftSize) ap2 <<= 1;
+    this.analyserFftSize = ap2;
+    this.analyserMinDb = Number.isFinite(options?.analyserMinDecibels) ? (options!.analyserMinDecibels as number) : -90;
+    this.analyserMaxDb = Number.isFinite(options?.analyserMaxDecibels) ? (options!.analyserMaxDecibels as number) : -10;
+    if (this.analyserMaxDb <= this.analyserMinDb) {
+      this.analyserMaxDb = this.analyserMinDb + 80;
+    }
+    const sm = Number.isFinite(options?.analyserSmoothing) ? (options!.analyserSmoothing as number) : 0.75;
+    this.analyserSmoothing = sm < 0 ? 0 : (sm > 1 ? 1 : sm);
+    const st = Number.isFinite(options?.analyserStride) ? (options!.analyserStride as number) : 2;
+    this.analyserStride = Math.max(1, Math.min(16, Math.floor(st)));
+
+    this.analyserWindow = new Float32Array(this.analyserFftSize);
+    for (let i = 0; i < this.analyserFftSize; i++) {
+      this.analyserWindow[i] = 0.5 * (1 - Math.cos((2 * Math.PI * i) / (this.analyserFftSize - 1)));
+    }
+    this.analyserRe = new Float32Array(this.analyserFftSize);
+    this.analyserIm = new Float32Array(this.analyserFftSize);
+    this.analyserMag = new Float32Array(this.analyserFftSize >> 1);
+    this.analyserBins01 = new Float32Array(this.analyserFftSize >> 1);
+    this.analyserBinsU8 = new Uint8Array(this.analyserFftSize >> 1);
+
     // ring holds 4 FFT windows worth (for overlap)
     this.ring = new Float32Array(this.fftSize * 4);
     this.window = new Float32Array(this.fftSize);
@@ -179,6 +223,9 @@ export class FftSpectrumAnalyzer {
     this.peaks01.fill(0);
     this.peakHold.fill(0);
     this.level01 = 0;
+
+    this.analyserBins01.fill(0);
+    this.analyserBinsU8.fill(0);
   }
 
   public setStreamFormat(sampleRate: number, sampleFormatCode: number, channelCount: number): void {
@@ -226,15 +273,17 @@ export class FftSpectrumAnalyzer {
     const frameBytes = bytesPerSample * ch;
     if (usable < frameBytes) return;
 
+    const stride = this.analyserStride;
+
     if (bytesPerSample === 2) {
       const view = new Int16Array(pcmBuffer, 0, Math.floor(usable / 2));
       // view is interleaved; take L only (fast) or average L/R (better)
       if (ch === 1) {
-        for (let i = 0; i < view.length; i++) {
+        for (let i = 0; i < view.length; i += stride) {
           this.pushSample(view[i] / 32768);
         }
       } else {
-        for (let i = 0; i + 1 < view.length; i += 2) {
+        for (let i = 0; i + 1 < view.length; i += 2 * stride) {
           const x = (view[i] + view[i + 1]) / 65536; // average then normalize
           this.pushSample(x);
         }
@@ -244,15 +293,67 @@ export class FftSpectrumAnalyzer {
 
     const view32 = new Int32Array(pcmBuffer, 0, Math.floor(usable / 4));
     if (ch === 1) {
-      for (let i = 0; i < view32.length; i++) {
+      for (let i = 0; i < view32.length; i += stride) {
         this.pushSample(view32[i] / 2147483648);
       }
     } else {
-      for (let i = 0; i + 1 < view32.length; i += 2) {
+      for (let i = 0; i + 1 < view32.length; i += 2 * stride) {
         const x = (view32[i] + view32[i + 1]) / 4294967296;
         this.pushSample(x);
       }
     }
+  }
+
+  /** WebAudio AnalyserNode-like bins: 0..255, length = analyserFftSize/2 */
+  public computeAnalyserBins(): void {
+    if (this.ringFilled < this.analyserFftSize) return;
+
+    const ringLen = this.ring.length;
+    let start = this.ringWrite - this.analyserFftSize;
+    if (start < 0) start += ringLen;
+
+    for (let i = 0; i < this.analyserFftSize; i++) {
+      const srcIdx = (start + i) % ringLen;
+      const v = this.ring[srcIdx] * this.analyserWindow[i];
+      this.analyserRe[i] = v;
+      this.analyserIm[i] = 0;
+    }
+
+    fftRadix2(this.analyserRe, this.analyserIm);
+
+    const half = this.analyserFftSize >> 1;
+    for (let i = 0; i < half; i++) {
+      const r = this.analyserRe[i];
+      const ii = this.analyserIm[i];
+      this.analyserMag[i] = r * r + ii * ii;
+    }
+
+    const eps = 1e-12;
+    const minDb = this.analyserMinDb;
+    const maxDb = this.analyserMaxDb;
+    const inv = 1.0 / (maxDb - minDb);
+    const a = this.analyserSmoothing;
+    const b = 1 - a;
+
+    for (let i = 0; i < half; i++) {
+      const db = 10 * Math.log10(this.analyserMag[i] + eps);
+      let norm = (db - minDb) * inv;
+      if (norm < 0) norm = 0;
+      else if (norm > 1) norm = 1;
+
+      const prev = this.analyserBins01[i];
+      const next = prev * a + norm * b;
+      this.analyserBins01[i] = next;
+      this.analyserBinsU8[i] = Math.round(next * 255);
+    }
+  }
+
+  public getAnalyserBinsU8(): Uint8Array {
+    return this.analyserBinsU8;
+  }
+
+  public getAnalyserBins01(): Float32Array {
+    return this.analyserBins01;
   }
 
   private pushSample(x: number): void {

@@ -1,15 +1,15 @@
-import { promptAction, window } from '@kit.ArkUI';
-import { BusinessError } from '@kit.BasicServicesKit';
+import { promptAction, window } from "@kit.ArkUI";
+import { BusinessError } from "@kit.BasicServicesKit";
 import {
   AudioRendererPlayer,
   PcmDecoderTool,
   PcmEqualizer,
   PcmStreamDecoder,
   DecodeAudioProgress,
-  PcmStreamDecoderCallbacks
-} from '@ospark/free-pcm';
-import { fileIo as fs } from '@kit.CoreFileKit';
-import { common } from '@kit.AbilityKit';
+  PcmStreamDecoderCallbacks,
+} from "@ospark/free-pcm";
+import { fileIo as fs } from "@kit.CoreFileKit";
+import { common } from "@kit.AbilityKit";
 
 import {
   ControlTab,
@@ -27,18 +27,18 @@ import {
   DRC_PRESET_LABEL,
   DRC_PRESET_MAP,
   DrcMeterInfo,
-  FftSpectrumAnalyzer
-} from './components';
+  FftSpectrumAnalyzer,
+} from "./components";
 
 @Entry
 @Component
 struct Index {
   // === 基础状态 ===
-  @State message: string = '音频实验室';
-  @State status: string = '设备就绪';
+  @State message: string = "音频实验室";
+  @State status: string = "设备就绪";
   @State isDecoding: boolean = false;
   @State isPlaying: boolean = false;
-  @State url: string = '';
+  @State url: string = "";
   @State currentIndex: number = 0;
 
   // === 进度相关 ===
@@ -70,7 +70,7 @@ struct Index {
   @State drcAttackMs: number = 10;
   @State drcReleaseMs: number = 100;
   @State drcMakeupDb: number = 0;
-  @State drcPresetLabel: string = '自定义';
+  @State drcPresetLabel: string = "自定义";
 
   // === 内部对象 ===
   private player: AudioRendererPlayer = new AudioRendererPlayer();
@@ -90,24 +90,28 @@ struct Index {
 
   // === 可视化（PCM Tap） ===
   @State vizLevel01: number = 0;
-  @State vizBands01: number[] = new Array(16).fill(0);
-  @State vizPeaks01: number[] = new Array(16).fill(0);
+  @State vizBands01: number[] = new Array(64).fill(0);
+  @State vizPeaks01: number[] = new Array(64).fill(-1);
 
   @State tiltEnabled: boolean = true;
 
   private spectrum: FftSpectrumAnalyzer = new FftSpectrumAnalyzer({
     fftSize: 1024,
     barCount: 16,
-    // tuned for "meaty" bars
-    minRelDb: -60,
-    gamma: 0.55,
-    attack: 0.82,
-    release: 0.18,
-    peakHoldFrames: 12,
-    gravity: 0.025,
 
-    // tilt compensation: more modern/energetic look
-    tiltDbPerOct: 4.5,
+    analyserFftSize: 256,
+    analyserMinDecibels: -90,
+    analyserMaxDecibels: -20,
+    analyserSmoothing: 0.75,
+    analyserStride: 2,
+
+    gamma: 0.4, // 原 0.55，稍微压低让中低能量更可见
+    attack: 0.65, // 原 0.82，稍微放慢上升，避免跳动过于激烈
+    release: 0.12, // 原 0.18，稍微加快下落，显得更灵动
+    peakHoldFrames: 18, // 原 12，峰值多停留一会儿，体感更好看
+    gravity: 0.018, // 原 0.025，峰值下落慢一点更优雅
+
+    tiltDbPerOct: 3.5, // 原 4.5，稍微减弱倾斜补偿，高频不会压太死
     tiltRefHz: 1000,
   });
   private vizTimerId: number = -1;
@@ -116,8 +120,21 @@ struct Index {
     if (this.vizTimerId !== -1) return;
     this.vizTimerId = setInterval(() => {
       this.spectrum.computeBars();
-      this.vizBands01 = this.spectrum.getBars01();
-      this.vizPeaks01 = this.spectrum.getPeaks01();
+
+      const bars = this.spectrum.getBars01();
+      const dstN = 64;
+      if (!this.vizBands01 || this.vizBands01.length !== dstN) {
+        this.vizBands01 = new Array(dstN).fill(0);
+      }
+      // 16 bars → 64 bars 插值
+      for (let i = 0; i < dstN; i++) {
+        const x = (i / (dstN - 1)) * (bars.length - 1);
+        const i0 = Math.floor(x);
+        const i1 = Math.min(bars.length - 1, i0 + 1);
+        const t = x - i0;
+        this.vizBands01[i] = bars[i0] * (1 - t) + bars[i1] * t;
+      }
+
       this.vizLevel01 = this.spectrum.getLevel01();
     }, 33);
   }
@@ -133,7 +150,7 @@ struct Index {
   aboutToAppear(): void {
     window.getLastWindow(getContext(this)).then((win) => {
       win.setWindowLayoutFullScreen(true);
-      win.setWindowSystemBarProperties({ statusBarContentColor: '#000000' });
+      win.setWindowSystemBarProperties({ statusBarContentColor: "#000000" });
     });
   }
 
@@ -184,7 +201,7 @@ struct Index {
           this.drcRatio,
           this.drcAttackMs,
           this.drcReleaseMs,
-          this.drcMakeupDb
+          this.drcMakeupDb,
         );
       }
     } catch (e) {
@@ -218,7 +235,7 @@ struct Index {
         this.isBuffering = false;
         return;
       }
-      if (this.isPlaying) this.isBuffering = (now - this.lastPosUpdateTs) > 800;
+      if (this.isPlaying) this.isBuffering = now - this.lastPosUpdateTs > 800;
     }, 200);
   }
 
@@ -243,11 +260,11 @@ struct Index {
   }
 
   private formatTime(ms: number): string {
-    if (!Number.isFinite(ms) || ms < 0) return '00:00';
+    if (!Number.isFinite(ms) || ms < 0) return "00:00";
     const totalSec = Math.floor(ms / 1000);
     const min = Math.floor(totalSec / 60);
     const sec = totalSec % 60;
-    return `${min.toString().padStart(2, '0')}:${sec.toString().padStart(2, '0')}`;
+    return `${min.toString().padStart(2, "0")}:${sec.toString().padStart(2, "0")}`;
   }
 
   // === 核心逻辑：播放/暂停切换 ===
@@ -257,19 +274,19 @@ struct Index {
         try {
           await this.player.pause();
           this.isPlaying = false;
-          this.status = '已暂停';
+          this.status = "已暂停";
           this.stopBufferingWatchdog();
         } catch (e) {
-          console.error('Pause failed:', e);
+          console.error("Pause failed:", e);
         }
       } else {
         try {
           await this.player.resume();
           this.isPlaying = true;
-          this.status = '播放中';
+          this.status = "播放中";
           this.startBufferingWatchdog();
         } catch (e) {
-          console.error('Resume failed:', e);
+          console.error("Resume failed:", e);
         }
       }
       return;
@@ -282,28 +299,28 @@ struct Index {
     if (this.isDecoding) return;
     let targetUrl = this.url.trim();
     if (!targetUrl) {
-      promptAction.showToast({ message: '请输入地址' });
+      promptAction.showToast({ message: "请输入地址" });
       return;
     }
 
     if (targetUrl === "test") {
       try {
         const ctx = getContext(this) as common.UIAbilityContext;
-        const fileData = await ctx.resourceManager.getRawFileContent('test.flac');
-        const tempPath = ctx.filesDir + '/temp_input.flac';
+        const fileData = await ctx.resourceManager.getRawFileContent("test.flac");
+        const tempPath = ctx.filesDir + "/temp_input.flac";
         const file = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
         fs.writeSync(file.fd, fileData.buffer);
         fs.closeSync(file);
         targetUrl = tempPath;
       } catch (e) {
-        promptAction.showToast({ message: '文件读取失败' });
+        promptAction.showToast({ message: "文件读取失败" });
         return;
       }
     }
 
     this.isPlaying = true;
     this.isDecoding = true;
-    this.status = '正在初始化...';
+    this.status = "正在初始化...";
     this.startBufferingWatchdog();
 
     try {
@@ -312,7 +329,7 @@ struct Index {
           if (p.progress >= 0) this.progressPercent = Math.min(100, Math.round(p.progress * 100));
         },
         onError: (e: Error) => {
-          if (this.currentDecoder && this.status !== '已重置') {
+          if (this.currentDecoder && this.status !== "已重置") {
             this.status = `错误: ${e.message}`;
             this.resetPlayback();
           }
@@ -321,7 +338,7 @@ struct Index {
           this.meterLevel = m.levelDb;
           this.meterGain = m.gainDb;
           this.meterGr = m.grDb;
-        }
+        },
       };
 
       const decoder = this.decoderTool.createStreamDecoder(
@@ -330,7 +347,7 @@ struct Index {
           eqEnabled: true,
           eqGainsDb: [...this.eqGainsUnified],
         },
-        callbacks
+        callbacks,
       );
 
       this.currentDecoder = decoder;
@@ -343,10 +360,17 @@ struct Index {
       });
 
       // PCM tap: only push samples (keep it light; no FFT here)
-      this.player.setOnPcmData((pcmBuf, bytesWritten, streamInfo) => {
-        this.spectrum.setStreamFormat(streamInfo.sampleRate, streamInfo.sampleFormatCode, streamInfo.channelCount);
-        this.spectrum.pushPcm(pcmBuf, bytesWritten);
-      });
+      this.player.setOnPcmData(
+        (pcmBuf, bytesWritten, streamInfo) => {
+          this.spectrum.setStreamFormat(
+            streamInfo.sampleRate,
+            streamInfo.sampleFormatCode,
+            streamInfo.channelCount,
+          );
+          this.spectrum.pushPcm(pcmBuf, bytesWritten);
+        },
+        { minIntervalMs: 16 },
+      );
 
       // apply current tilt setting
       this.spectrum.setTilt(this.tiltEnabled, 4.5, 1000);
@@ -361,18 +385,17 @@ struct Index {
       await decoder.done;
 
       if (this.currentDecoder === decoder) {
-        this.status = '播放结束';
+        this.status = "播放结束";
         this.isPlaying = false;
         this.currentPosMs = 0;
         this.vizLevel01 = 0;
-        this.vizBands01 = new Array(16).fill(0);
-        this.vizPeaks01 = new Array(16).fill(0);
+        this.vizBands01 = new Array(64).fill(0);
+        this.vizPeaks01 = new Array(64).fill(-1);
         this.spectrum.reset();
         this.player.setOnPcmData(null);
         this.stopVizTimer();
         this.stopBufferingWatchdog();
       }
-
     } catch (err) {
       if (this.currentDecoder) {
         this.status = `启动失败: ${(err as BusinessError).message}`;
@@ -389,13 +412,13 @@ struct Index {
     try {
       await this.player.stop();
     } catch (e) {
-      console.warn('Stop failed:', e);
+      console.warn("Stop failed:", e);
     }
 
     this.currentDecoder = null;
     this.isPlaying = false;
     this.isDecoding = false;
-    this.status = '已重置';
+    this.status = "已重置";
     this.currentPosMs = 0;
     this.progressPercent = 0;
 
@@ -408,8 +431,8 @@ struct Index {
     this.meterGain = 0;
     this.meterGr = 0;
     this.vizLevel01 = 0;
-    this.vizBands01 = new Array(16).fill(0);
-    this.vizPeaks01 = new Array(16).fill(0);
+    this.vizBands01 = new Array(64).fill(0);
+    this.vizPeaks01 = new Array(64).fill(-1);
     this.spectrum.reset();
 
     // detach PCM tap
@@ -432,7 +455,7 @@ struct Index {
         .width(16)
         .opacity(this.currentIndex === index ? 1 : 0)
         .margin({ top: 4 })
-    }
+    };
   }
 
   // === 主界面构建 ===
@@ -444,20 +467,18 @@ struct Index {
           .fontSize(20)
           .fontWeight(700)
           .margin({ top: 15, bottom: 5 })
-
         Text(
           this.durationMs > 0
             ? `${this.formatTime(this.currentPosMs)} / ${this.formatTime(this.durationMs)}`
-            : this.formatTime(this.currentPosMs)
+            : this.formatTime(this.currentPosMs),
         )
           .fontSize(36)
           .fontWeight(700)
           .margin({ bottom: 25 })
-
         Slider({
           value: this.isDraggingSeek ? this.seekSliderMs : this.currentPosMs,
           min: 0,
-          max: this.durationMs > 0 ? this.durationMs : 100
+          max: this.durationMs > 0 ? this.durationMs : 100,
         })
           .onChange(async (v, mode) => {
             this.seekSliderMs = v;
@@ -469,18 +490,25 @@ struct Index {
             }
           })
       }
-      .width('100%')
+      .width("100%")
       .padding(24)
       .backgroundColor(COLOR_BG)
 
       // 可视化区域（Canvas）
-      SpectrumBars({ bands01: this.vizBands01, peaks01: this.vizPeaks01, renderBarCount: 64, level01: this.vizLevel01, isPlaying: this.isPlaying, heightVp: 140 })
-        .width('100%')
+      SpectrumBars({
+        bands01: this.vizBands01,
+        peaks01: this.vizPeaks01,
+        renderBarCount: 64,
+        level01: this.vizLevel01,
+        isPlaying: this.isPlaying,
+        heightVp: 140,
+      })
+        .width("100%")
         .padding({ left: 24, right: 24, bottom: 12 })
 
       // 可选：频谱倾斜补偿开关
       Row() {
-        Text('Tilt 补偿 (+4.5dB/oct)')
+        Text("Tilt 补偿 (+4.5dB/oct)")
           .fontSize(14)
           .fontColor(COLOR_TEXT_SEC)
         Blank()
@@ -491,7 +519,7 @@ struct Index {
             this.spectrum.setTilt(this.tiltEnabled, 4.5, 1000);
           })
       }
-      .width('100%')
+      .width("100%")
       .padding({ left: 24, right: 24, bottom: 12 })
 
       // Tabs 区域
@@ -506,12 +534,17 @@ struct Index {
             isBuffering: this.isBuffering,
             hasDecoder: this.currentDecoder !== null,
             progressPercent: this.progressPercent,
-            onUrlChange: (url: string) => { this.url = url; },
-            onTogglePlay: () => { this.togglePlayState(); },
-            onReset: () => { this.resetPlayback(); }
+            onUrlChange: (url: string) => {
+              this.url = url;
+            },
+            onTogglePlay: () => {
+              this.togglePlayState();
+            },
+            onReset: () => {
+              this.resetPlayback();
+            },
           })
-        }.tabBar(this.TabTitle('控制', 0))
-
+        }.tabBar(this.TabTitle("控制", 0))
         TabContent() {
           MixerTab({
             volLinearLeft: this.volLinearLeft,
@@ -520,10 +553,9 @@ struct Index {
               this.volLinearLeft = left;
               this.volLinearRight = right;
               this.debounceVolumeApply();
-            }
+            },
           })
-        }.tabBar(this.TabTitle('调音', 1))
-
+        }.tabBar(this.TabTitle("调音", 1))
         TabContent() {
           EqualizerTab({
             isStereoEqMode: this.isStereoEqMode,
@@ -543,12 +575,11 @@ struct Index {
               this.eqGainsUnified = unified;
               this.eqGainsLeft = left;
               this.eqGainsRight = right;
-              this.currentPresetLabel = '自定义';
+              this.currentPresetLabel = "自定义";
               this.applyEqSettings();
-            }
+            },
           })
-        }.tabBar(this.TabTitle('均衡', 2))
-
+        }.tabBar(this.TabTitle("均衡", 2))
         TabContent() {
           DrcTab({
             drcEnabled: this.drcEnabled,
@@ -571,7 +602,7 @@ struct Index {
               this.drcAttackMs = attack;
               this.drcReleaseMs = release;
               this.drcMakeupDb = makeup;
-              this.drcPresetLabel = '自定义';
+              this.drcPresetLabel = "自定义";
               this.debounceDrcApply();
             },
             onPresetChange: (preset) => {
@@ -586,16 +617,16 @@ struct Index {
                 this.applyDrcSettings();
               }
             },
-            onDrawMeter: () => {}
+            onDrawMeter: () => {},
           })
-        }.tabBar(this.TabTitle('压缩', 3))
+        }.tabBar(this.TabTitle("压缩", 3))
       }
       .layoutWeight(1)
-      .onChange((i) => this.currentIndex = i)
+      .onChange((i) => (this.currentIndex = i))
     }
-    .width('100%')
-    .height('100%')
+    .width("100%")
+    .height("100%")
     .backgroundColor(COLOR_BG)
-    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM])
+    .expandSafeArea([SafeAreaType.SYSTEM], [SafeAreaEdge.TOP, SafeAreaEdge.BOTTOM]);
   }
 }

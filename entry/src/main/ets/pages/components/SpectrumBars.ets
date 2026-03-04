@@ -49,7 +49,7 @@ export struct SpectrumBars {
 
   private start(): void {
     if (this.drawTimerId !== -1) return;
-    const intervalMs = 33; // ~30fps
+    const intervalMs = 16; // closer to web rAF feel
     this.drawTimerId = setInterval(() => {
       this.draw();
     }, intervalMs);
@@ -187,18 +187,16 @@ export struct SpectrumBars {
     const maxBarH = innerH;
 
     const grad = ctx.createLinearGradient(0, paddingY + innerH, 0, paddingY);
-    grad.addColorStop(0, '#00C853');
-    grad.addColorStop(0.65, '#FFEB3B');
-    grad.addColorStop(1, '#FF5252');
+    grad.addColorStop(0, '#db2777');
+    grad.addColorStop(1, '#f472b6');
     ctx.fillStyle = grad;
 
     let x = paddingX;
     for (let i = 0; i < n; i++) {
       const target = clamp01(bands[i]);
       const cur = this.smoothBands[i] ?? 0;
-      const atk = 0.45;
-      const rel = 0.18;
-      const next = (target > cur) ? (cur + (target - cur) * atk) : (cur + (target - cur) * rel);
+      const k = 0.35;
+      const next = cur + (target - cur) * k;
       this.smoothBands[i] = next;
 
       const barH = Math.floor(next * maxBarH);

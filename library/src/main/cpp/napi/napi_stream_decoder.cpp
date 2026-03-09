@@ -1040,8 +1040,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             return ctx->ring->Push(pcm, size, &ctx->cancel);
         }
 
-        if (ch != 1 && ch != 2) {
-            // Only stereo/mono are supported for per-ear compensation.
+        if (ch < 1 || ch > 8) {
             return ctx->ring->Push(pcm, size, &ctx->cancel);
         }
 

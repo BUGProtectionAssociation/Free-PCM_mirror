@@ -24,6 +24,9 @@ void PcmEqualizer::Reset()
         for (size_t c = 0; c < 2; c++) {
             stateStereo_[b][c] = {0, 0, 0, 0};
         }
+        for (size_t c = 0; c < kMaxChannels; c++) {
+            stateMulti_[b][c] = {0, 0, 0, 0};
+        }
         for (size_t c = 0; c < 2; c++) {
             biquadsByCh_[c][b] = {1, 0, 0, 0, 0};
         }
@@ -34,7 +37,7 @@ void PcmEqualizer::Init(int32_t sampleRate, int32_t channelCount)
 {
     sampleRate_ = sampleRate;
     channelCount_ = channelCount;
-    ready_ = (sampleRate_ > 0) && (channelCount_ == 1 || channelCount_ == 2);
+    ready_ = (sampleRate_ > 0) && (channelCount_ >= 1) && (channelCount_ <= static_cast<int32_t>(kMaxChannels));
     Reset();
     if (ready_) {
         RecalcBiquads();
@@ -191,35 +194,65 @@ void PcmEqualizer::Process(int16_t* samples, size_t frameCount)
         return;
     }
 
-    // stereo interleaved
-    for (size_t i = 0; i < frameCount; i++) {
-        float xl = static_cast<float>(samples[i * 2]);
-        float xr = static_cast<float>(samples[i * 2 + 1]);
+    if (channelCount_ == 2) {
+        for (size_t i = 0; i < frameCount; i++) {
+            float xl = static_cast<float>(samples[i * 2]);
+            float xr = static_cast<float>(samples[i * 2 + 1]);
 
-        for (size_t b = 0; b < kBandCount; b++) {
-            State& sl = stateStereo_[b][0];
-            State& sr = stateStereo_[b][1];
+            for (size_t b = 0; b < kBandCount; b++) {
+                State& sl = stateStereo_[b][0];
+                State& sr = stateStereo_[b][1];
 
-            const Biquad& ql = biquadsByCh_[0][b];
-            const Biquad& qr = biquadsByCh_[1][b];
+                const Biquad& ql = biquadsByCh_[0][b];
+                const Biquad& qr = biquadsByCh_[1][b];
 
-            const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
-            sl.x2 = sl.x1;
-            sl.x1 = xl;
-            sl.y2 = sl.y1;
-            sl.y1 = yl;
-            xl = yl;
+                const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
+                sl.x2 = sl.x1;
+                sl.x1 = xl;
+                sl.y2 = sl.y1;
+                sl.y1 = yl;
+                xl = yl;
 
-            const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
-            sr.x2 = sr.x1;
-            sr.x1 = xr;
-            sr.y2 = sr.y1;
-            sr.y1 = yr;
-            xr = yr;
+                const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
+                sr.x2 = sr.x1;
+                sr.x1 = xr;
+                sr.y2 = sr.y1;
+                sr.y1 = yr;
+                xr = yr;
+            }
+
+            samples[i * 2] = ClampS16(xl);
+            samples[i * 2 + 1] = ClampS16(xr);
         }
+        return;
+    }
 
-        samples[i * 2] = ClampS16(xl);
-        samples[i * 2 + 1] = ClampS16(xr);
+    if (channelCount_ > 0 && channelCount_ <= static_cast<int32_t>(kMaxChannels)) {
+        const size_t ch = static_cast<size_t>(channelCount_);
+        for (size_t i = 0; i < frameCount; i++) {
+            float x[kMaxChannels];
+            for (size_t c = 0; c < ch; c++) {
+                x[c] = static_cast<float>(samples[i * ch + c]);
+            }
+
+            for (size_t b = 0; b < kBandCount; b++) {
+                const Biquad& q = biquadsByCh_[0][b];
+                for (size_t c = 0; c < ch; c++) {
+                    State& s = stateMulti_[b][c];
+                    const float y = (q.b0 * x[c]) + (q.b1 * s.x1) + (q.b2 * s.x2) - (q.a1 * s.y1) - (q.a2 * s.y2);
+                    s.x2 = s.x1;
+                    s.x1 = x[c];
+                    s.y2 = s.y1;
+                    s.y1 = y;
+                    x[c] = y;
+                }
+            }
+
+            for (size_t c = 0; c < ch; c++) {
+                samples[i * ch + c] = ClampS16(x[c]);
+            }
+        }
+        return;
     }
 }
 
@@ -249,35 +282,66 @@ void PcmEqualizer::Process(int32_t* samples, size_t frameCount)
         return;
     }
 
-    // stereo interleaved
-    for (size_t i = 0; i < frameCount; i++) {
-        float xl = static_cast<float>(samples[i * 2]) * kNorm;
-        float xr = static_cast<float>(samples[i * 2 + 1]) * kNorm;
+    if (channelCount_ == 2) {
+        // stereo interleaved
+        for (size_t i = 0; i < frameCount; i++) {
+            float xl = static_cast<float>(samples[i * 2]) * kNorm;
+            float xr = static_cast<float>(samples[i * 2 + 1]) * kNorm;
 
-        for (size_t b = 0; b < kBandCount; b++) {
-            State& sl = stateStereo_[b][0];
-            State& sr = stateStereo_[b][1];
+            for (size_t b = 0; b < kBandCount; b++) {
+                State& sl = stateStereo_[b][0];
+                State& sr = stateStereo_[b][1];
 
-            const Biquad& ql = biquadsByCh_[0][b];
-            const Biquad& qr = biquadsByCh_[1][b];
+                const Biquad& ql = biquadsByCh_[0][b];
+                const Biquad& qr = biquadsByCh_[1][b];
 
-            const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
-            sl.x2 = sl.x1;
-            sl.x1 = xl;
-            sl.y2 = sl.y1;
-            sl.y1 = yl;
-            xl = yl;
+                const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
+                sl.x2 = sl.x1;
+                sl.x1 = xl;
+                sl.y2 = sl.y1;
+                sl.y1 = yl;
+                xl = yl;
 
-            const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
-            sr.x2 = sr.x1;
-            sr.x1 = xr;
-            sr.y2 = sr.y1;
-            sr.y1 = yr;
-            xr = yr;
+                const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
+                sr.x2 = sr.x1;
+                sr.x1 = xr;
+                sr.y2 = sr.y1;
+                sr.y1 = yr;
+                xr = yr;
+            }
+
+            samples[i * 2] = ClampS32(xl / kNorm);
+            samples[i * 2 + 1] = ClampS32(xr / kNorm);
         }
+        return;
+    }
 
-        samples[i * 2] = ClampS32(xl / kNorm);
-        samples[i * 2 + 1] = ClampS32(xr / kNorm);
+    if (channelCount_ > 0 && channelCount_ <= static_cast<int32_t>(kMaxChannels)) {
+        const size_t ch = static_cast<size_t>(channelCount_);
+        for (size_t i = 0; i < frameCount; i++) {
+            float x[kMaxChannels];
+            for (size_t c = 0; c < ch; c++) {
+                x[c] = static_cast<float>(samples[i * ch + c]) * kNorm;
+            }
+
+            for (size_t b = 0; b < kBandCount; b++) {
+                const Biquad& q = biquadsByCh_[0][b];
+                for (size_t c = 0; c < ch; c++) {
+                    State& s = stateMulti_[b][c];
+                    const float y = (q.b0 * x[c]) + (q.b1 * s.x1) + (q.b2 * s.x2) - (q.a1 * s.y1) - (q.a2 * s.y2);
+                    s.x2 = s.x1;
+                    s.x1 = x[c];
+                    s.y2 = s.y1;
+                    s.y1 = y;
+                    x[c] = y;
+                }
+            }
+
+            for (size_t c = 0; c < ch; c++) {
+                samples[i * ch + c] = ClampS32(x[c] / kNorm);
+            }
+        }
+        return;
     }
 }
 
@@ -305,34 +369,65 @@ void PcmEqualizer::ProcessFloat(float* samples, size_t frameCount)
         return;
     }
 
-    // stereo interleaved
-    for (size_t i = 0; i < frameCount; i++) {
-        float xl = samples[i * 2];
-        float xr = samples[i * 2 + 1];
+    if (channelCount_ == 2) {
+        // stereo interleaved
+        for (size_t i = 0; i < frameCount; i++) {
+            float xl = samples[i * 2];
+            float xr = samples[i * 2 + 1];
 
-        for (size_t b = 0; b < kBandCount; b++) {
-            State& sl = stateStereo_[b][0];
-            State& sr = stateStereo_[b][1];
+            for (size_t b = 0; b < kBandCount; b++) {
+                State& sl = stateStereo_[b][0];
+                State& sr = stateStereo_[b][1];
 
-            const Biquad& ql = biquadsByCh_[0][b];
-            const Biquad& qr = biquadsByCh_[1][b];
+                const Biquad& ql = biquadsByCh_[0][b];
+                const Biquad& qr = biquadsByCh_[1][b];
 
-            const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
-            sl.x2 = sl.x1;
-            sl.x1 = xl;
-            sl.y2 = sl.y1;
-            sl.y1 = yl;
-            xl = yl;
+                const float yl = (ql.b0 * xl) + (ql.b1 * sl.x1) + (ql.b2 * sl.x2) - (ql.a1 * sl.y1) - (ql.a2 * sl.y2);
+                sl.x2 = sl.x1;
+                sl.x1 = xl;
+                sl.y2 = sl.y1;
+                sl.y1 = yl;
+                xl = yl;
 
-            const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
-            sr.x2 = sr.x1;
-            sr.x1 = xr;
-            sr.y2 = sr.y1;
-            sr.y1 = yr;
-            xr = yr;
+                const float yr = (qr.b0 * xr) + (qr.b1 * sr.x1) + (qr.b2 * sr.x2) - (qr.a1 * sr.y1) - (qr.a2 * sr.y2);
+                sr.x2 = sr.x1;
+                sr.x1 = xr;
+                sr.y2 = sr.y1;
+                sr.y1 = yr;
+                xr = yr;
+            }
+
+            samples[i * 2] = xl;
+            samples[i * 2 + 1] = xr;
         }
+        return;
+    }
 
-        samples[i * 2] = xl;
-        samples[i * 2 + 1] = xr;
+    if (channelCount_ > 0 && channelCount_ <= static_cast<int32_t>(kMaxChannels)) {
+        const size_t ch = static_cast<size_t>(channelCount_);
+        for (size_t i = 0; i < frameCount; i++) {
+            float x[kMaxChannels];
+            for (size_t c = 0; c < ch; c++) {
+                x[c] = samples[i * ch + c];
+            }
+
+            for (size_t b = 0; b < kBandCount; b++) {
+                const Biquad& q = biquadsByCh_[0][b];
+                for (size_t c = 0; c < ch; c++) {
+                    State& s = stateMulti_[b][c];
+                    const float y = (q.b0 * x[c]) + (q.b1 * s.x1) + (q.b2 * s.x2) - (q.a1 * s.y1) - (q.a2 * s.y2);
+                    s.x2 = s.x1;
+                    s.x1 = x[c];
+                    s.y2 = s.y1;
+                    s.y1 = y;
+                    x[c] = y;
+                }
+            }
+
+            for (size_t c = 0; c < ch; c++) {
+                samples[i * ch + c] = x[c];
+            }
+        }
+        return;
     }
 }

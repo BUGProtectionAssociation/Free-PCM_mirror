@@ -12,7 +12,7 @@ TruePeakLimiter::TruePeakLimiter()
 
 bool TruePeakLimiter::IsReady() const
 {
-    return ready_ && (channelCount_ == 1 || channelCount_ == 2) && sampleRate_ > 0 && lookaheadFrames_ > 0;
+    return ready_ && (channelCount_ >= 1) && (channelCount_ <= 8) && sampleRate_ > 0 && lookaheadFrames_ > 0;
 }
 
 void TruePeakLimiter::Reset()
@@ -27,7 +27,7 @@ void TruePeakLimiter::Init(int32_t sampleRate, int32_t channelCount)
 {
     sampleRate_ = sampleRate;
     channelCount_ = channelCount;
-    ready_ = (sampleRate_ > 0) && (channelCount_ == 1 || channelCount_ == 2);
+    ready_ = (sampleRate_ > 0) && (channelCount_ >= 1) && (channelCount_ <= 8);
     SetParams(ceilingDbtp_, lookaheadMs_, attackMs_, releaseMs_);
 }
 

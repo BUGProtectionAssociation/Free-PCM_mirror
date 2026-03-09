@@ -11,6 +11,7 @@
 class PcmEqualizer {
 public:
     static constexpr size_t kBandCount = 10;
+    static constexpr size_t kMaxChannels = 8;
 
     PcmEqualizer();
 
@@ -84,6 +85,7 @@ private:
     // state_[band][channel]
     std::array<std::array<State, 2>, kBandCount> stateStereo_;
     std::array<State, kBandCount> stateMono_;
+    std::array<std::array<State, kMaxChannels>, kBandCount> stateMulti_;
 };
 
 #endif // PCM_EQUALIZER_H

@@ -67,7 +67,7 @@ void DrcProcessor::Init(int32_t sampleRate, int32_t channelCount)
 {
     sampleRate_ = sampleRate;
     channelCount_ = channelCount;
-    ready_ = (sampleRate_ > 0) && (channelCount_ == 1 || channelCount_ == 2);
+    ready_ = (sampleRate_ > 0) && (channelCount_ >= 1) && (channelCount_ <= 8);
     attackCoef_ = TimeMsToCoef(attackMs_, static_cast<float>(sampleRate_));
     releaseCoef_ = TimeMsToCoef(releaseMs_, static_cast<float>(sampleRate_));
     Reset();
@@ -155,21 +155,23 @@ void DrcProcessor::Process(int16_t* samples, size_t frameCount)
         return;
     }
 
-    // stereo interleaved (linked)
+    const size_t ch = static_cast<size_t>(channelCount_);
     for (size_t i = 0; i < frameCount; i++) {
-        const float xl = std::fabs(static_cast<float>(samples[i * 2]) * kNorm);
-        const float xr = std::fabs(static_cast<float>(samples[i * 2 + 1]) * kNorm);
-        const float level = (xl > xr) ? xl : xr;
-        if (level > maxLevel) {
-            maxLevel = level;
+        float level = 0.0f;
+        const size_t base = i * ch;
+        for (size_t c = 0; c < ch; c++) {
+            const float x = std::fabs(static_cast<float>(samples[base + c]) * kNorm);
+            if (x > level) level = x;
         }
+        if (level > maxLevel) maxLevel = level;
+
         const float target = ComputeTargetGain(level);
         const float g = SmoothGain(target);
 
-        const float yl = static_cast<float>(samples[i * 2]) * g;
-        const float yr = static_cast<float>(samples[i * 2 + 1]) * g;
-        samples[i * 2] = ClampS16(yl);
-        samples[i * 2 + 1] = ClampS16(yr);
+        for (size_t c = 0; c < ch; c++) {
+            const float y = static_cast<float>(samples[base + c]) * g;
+            samples[base + c] = ClampS16(y);
+        }
     }
 
     lastLevelDb_ = LinToDb(maxLevel);
@@ -232,19 +234,21 @@ void DrcProcessor::Process(int32_t* samples, size_t frameCount)
     }
 
     for (size_t i = 0; i < frameCount; i++) {
-        const float xl = std::fabs(static_cast<float>(samples[i * 2]) * kNorm);
-        const float xr = std::fabs(static_cast<float>(samples[i * 2 + 1]) * kNorm);
-        const float level = (xl > xr) ? xl : xr;
-        if (level > maxLevel) {
-            maxLevel = level;
+        float level = 0.0f;
+        const size_t base = i * ch;
+        for (size_t c = 0; c < ch; c++) {
+            const float x = std::fabs(static_cast<float>(samples[base + c]) * kNorm);
+            if (x > level) level = x;
         }
+        if (level > maxLevel) maxLevel = level;
+
         const float target = ComputeTargetGain(level);
         const float g = SmoothGain(target);
 
-        const float yl = static_cast<float>(samples[i * 2]) * g;
-        const float yr = static_cast<float>(samples[i * 2 + 1]) * g;
-        samples[i * 2] = ClampS32(yl);
-        samples[i * 2 + 1] = ClampS32(yr);
+        for (size_t c = 0; c < ch; c++) {
+            const float y = static_cast<float>(samples[base + c]) * g;
+            samples[base + c] = ClampS32(y);
+        }
     }
 
     lastLevelDb_ = LinToDb(maxLevel);
@@ -279,19 +283,22 @@ void DrcProcessor::ProcessFloat(float* samples, size_t frameCount)
         return;
     }
 
+    const size_t ch = static_cast<size_t>(channelCount_);
     for (size_t i = 0; i < frameCount; i++) {
-        const float xl = std::fabs(samples[i * 2]);
-        const float xr = std::fabs(samples[i * 2 + 1]);
-        const float level = (xl > xr) ? xl : xr;
-        if (level > maxLevel) {
-            maxLevel = level;
+        float level = 0.0f;
+        const size_t base = i * ch;
+        for (size_t c = 0; c < ch; c++) {
+            const float x = std::fabs(samples[base + c]);
+            if (x > level) level = x;
         }
+        if (level > maxLevel) maxLevel = level;
 
         const float target = ComputeTargetGain(level);
         const float g = SmoothGain(target);
 
-        samples[i * 2] = samples[i * 2] * g;
-        samples[i * 2 + 1] = samples[i * 2 + 1] * g;
+        for (size_t c = 0; c < ch; c++) {
+            samples[base + c] = samples[base + c] * g;
+        }
     }
 
     lastLevelDb_ = LinToDb(maxLevel);

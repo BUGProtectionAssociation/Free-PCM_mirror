@@ -148,19 +148,18 @@ export class AudioRendererPlayer {
     }
   }
 
-  /**
-   * 映射声道数到系统枚举值
-   *
-   * @param count - 声道数（1 或 2）
-   * @returns 对应的 AudioChannel 枚举值
-   *
-   * @private
-   */
   private mapChannels(count: number): audio.AudioChannel {
-    if (count === 1) {
-      return audio.AudioChannel.CHANNEL_1;
+    switch (count) {
+      case 1: return audio.AudioChannel.CHANNEL_1;
+      case 2: return audio.AudioChannel.CHANNEL_2;
+      case 3: return audio.AudioChannel.CHANNEL_3;
+      case 4: return audio.AudioChannel.CHANNEL_4;
+      case 5: return audio.AudioChannel.CHANNEL_5;
+      case 6: return audio.AudioChannel.CHANNEL_6;
+      case 7: return audio.AudioChannel.CHANNEL_7;
+      case 8: return audio.AudioChannel.CHANNEL_8;
+      default: return audio.AudioChannel.CHANNEL_2;
     }
-    return audio.AudioChannel.CHANNEL_2;
   }
 
   /**

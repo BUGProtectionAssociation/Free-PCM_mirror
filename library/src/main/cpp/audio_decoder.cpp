@@ -166,14 +166,22 @@ bool AudioDecoder::Configure(int32_t sampleRate, int32_t channelCount, int32_t b
         OH_LOG_INFO(LOG_APP, "Bitrate not set (optional parameter skipped)");
     }
 
-    // 输出采样格式：支持 S16LE (1) 和 S32LE (3)
+    // 输出采样格式：支持 S16LE (1), S32LE (3), F32LE (4)
     // 说明：此 key 的取值与 AudioSampleFormat 枚举一致
     // sampleFormat = 0: auto (should not reach here, handled by caller)
     // sampleFormat = 1: S16LE (default)
     // sampleFormat = 3: S32LE (high resolution)
-    int32_t finalSampleFormat = (sampleFormat == 3) ? 3 : 1;  // 3 = S32LE, 默认 1 = S16LE
+    // sampleFormat = 4: F32LE (32-bit float)
+    int32_t finalSampleFormat = 1;  // Default S16LE
+    if (sampleFormat == 4) {
+        finalSampleFormat = 4;  // F32LE
+    } else if (sampleFormat == 3) {
+        finalSampleFormat = 3;  // S32LE
+    }
     OH_AVFormat_SetIntValue(format_, OH_MD_KEY_AUDIO_SAMPLE_FORMAT, finalSampleFormat);
-    if (finalSampleFormat == 3) {
+    if (finalSampleFormat == 4) {
+        OH_LOG_INFO(LOG_APP, "Set output sample format: F32LE");
+    } else if (finalSampleFormat == 3) {
         OH_LOG_INFO(LOG_APP, "Set output sample format: S32LE");
     } else {
         OH_LOG_INFO(LOG_APP, "Set output sample format: S16LE");
@@ -531,21 +539,23 @@ bool AudioDecoder::DecodeToPcmStream(const std::string& inputPathOrUri,
         int32_t finalSR = detectedSampleRate_ > 0 ? detectedSampleRate_ : (sampleRate > 0 ? sampleRate : 44100);
         int32_t finalCh = detectedChannelCount_ > 0 ? detectedChannelCount_ : (channelCount > 0 ? channelCount : 2);
         int32_t finalSF = 1;
-        if (detectedSampleFormat_ == 3) {
-            finalSF = 3;
+        if (detectedSampleFormat_ == 4) {
+            finalSF = 4;  // F32LE
+        } else if (detectedSampleFormat_ == 3) {
+            finalSF = 3;  // S32LE
         } else if (detectedSampleFormat_ == 2) {
-            finalSF = 2;
+            finalSF = 2;  // S24LE
         } else if (detectedSampleFormat_ == 1) {
-            finalSF = 1;
+            finalSF = 1;  // S16LE
         } else {
             // Fall back to S16LE for safety (most WAV are S16LE).
             finalSF = 1;
-            OH_LOG_INFO(LOG_APP, "Passthrough audio/raw sampleFormat unknown, defaulting to S16LE");
+            OH_LOG_INFO(LOG_APP, "Passthrough audio/raw sampleFormat unknown, defaulting to S16LE, detectedSampleFormat=%{public}d", detectedSampleFormat_);
         }
 
         // For passthrough mode, user-specified sampleFormat is informational only.
         // We must use the source format since no conversion is performed.
-        if (sampleFormat == 1 || sampleFormat == 2 || sampleFormat == 3) {
+        if (sampleFormat >= 1 && sampleFormat <= 4) {
             if (sampleFormat != finalSF) {
                 OH_LOG_INFO(LOG_APP, "Passthrough mode: user requested sampleFormat=%{public}d but source is %{public}d (using source format, no conversion)", sampleFormat, finalSF);
             }
@@ -661,11 +671,11 @@ bool AudioDecoder::DecodeToPcmStream(const std::string& inputPathOrUri,
     const int32_t finalChannelCount = (channelCount > 0) ? channelCount : ((detectedChannelCount_ > 0) ? detectedChannelCount_ : 2);
 
     int32_t finalSampleFormat = 1;  // Default S16LE
-    if (sampleFormat == 1 || sampleFormat == 2 || sampleFormat == 3) {
-        // User explicitly specified format
+    if (sampleFormat >= 1 && sampleFormat <= 4) {
+        // User explicitly specified format (1=S16LE, 2=S24LE, 3=S32LE, 4=F32LE)
         finalSampleFormat = sampleFormat;
         OH_LOG_INFO(LOG_APP, "Using user-specified sampleFormat: %{public}d", sampleFormat);
-    } else if (detectedSampleFormat_ == 1 || detectedSampleFormat_ == 2 || detectedSampleFormat_ == 3) {
+    } else if (detectedSampleFormat_ >= 1 && detectedSampleFormat_ <= 4) {
         // Auto-detect from source track
         finalSampleFormat = detectedSampleFormat_;
         OH_LOG_INFO(LOG_APP, "Auto-detected sampleFormat from source: %{public}d", detectedSampleFormat_);

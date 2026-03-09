@@ -30,7 +30,7 @@ export type DecodeAudioProgress = {
 export type PcmStreamInfo = {
   /** 采样率（Hz） */
   sampleRate: number;
-  /** 声道数（1=单声道，2=立体声） */
+  /** 声道数 */
   channelCount: number;
   /**
    * 采样格式
@@ -38,9 +38,9 @@ export type PcmStreamInfo = {
    * - 's32le': 32位小端PCM
    * - 'unknown': 未知格式
    */
-  sampleFormat: 's16le' | 's32le' | 'unknown';
+  sampleFormat: 's16le' | 's32le' | 'f32le' | 'unknown';
 
-  /** 采样格式编码：1=S16LE, 3=S32LE */
+  /** 采样格式编码：1=S16LE, 3=S32LE, 4=F32LE */
   sampleFormatCode: number;
   /** 音频时长（毫秒），0 表示未知 */
   durationMs: number;
@@ -77,6 +77,7 @@ export type PcmStreamDecoderOptions = {
    * 输出采样格式
    * - 1: S16LE
    * - 3: S32LE
+   * - 4: F32LE
    */
   sampleFormat?: number;
 

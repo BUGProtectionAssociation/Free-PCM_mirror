@@ -39,8 +39,12 @@ void CallJsDecoderEvent(napi_env env, napi_value /*jsCb*/, void *context, void *
 
         // sampleFormat: use string for ArkTS friendliness
         napi_value sf;
-        if (payload->sampleFormat == 3) {
+        if (payload->sampleFormat == 4) {
+            napi_create_string_utf8(env, "f32le", NAPI_AUTO_LENGTH, &sf);
+        } else if (payload->sampleFormat == 3) {
             napi_create_string_utf8(env, "s32le", NAPI_AUTO_LENGTH, &sf);
+        } else if (payload->sampleFormat == 2) {
+            napi_create_string_utf8(env, "s24le", NAPI_AUTO_LENGTH, &sf);
         } else if (payload->sampleFormat == 1) {
             napi_create_string_utf8(env, "s16le", NAPI_AUTO_LENGTH, &sf);
         } else {
@@ -903,14 +907,8 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             ctx->ringBytes = rb;
         }
 
-        // 重新创建 PcmRingBuffer，使用实际的音频参数
-        const int32_t bytesPerSample = (ctx->actualSampleFormat == 3) ? 4 : 2;
-        ctx->ring = std::make_unique<audio::PcmRingBuffer>(rb,
-                                                           sr,            // sampleRate
-                                                           cc,            // channels
-                                                           bytesPerSample // bytesPerSample
-        );
-
+        // 先发送 Ready 事件，让主线程尽早得到通知
+        // 这样可以避免环形缓冲区分配延迟 Ready Promise 的 resolve
         auto payload = std::make_unique<DecoderEventPayload>();
         payload->type = DecoderEventType::Ready;
         payload->sampleRate = sr;
@@ -927,6 +925,15 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         if (st == napi_ok) {
             (void)payload.release();
         }
+
+        // 在发送 Ready 事件之后，再分配环形缓冲区
+        // 这个操作在工作线程中进行，不会阻塞主线程
+        const int32_t bytesPerSample = (ctx->actualSampleFormat == 3) ? 4 : 2;
+        ctx->ring = std::make_unique<audio::PcmRingBuffer>(rb,
+                                                           sr,            // sampleRate
+                                                           cc,            // channels
+                                                           bytesPerSample // bytesPerSample
+        );
     };
 
     AudioDecoder::ProgressCallback progressCb = [ctx](double progress, int64_t ptsMs, int64_t durationMs) {
@@ -1028,7 +1035,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         }
 
         const int32_t sf = ctx->actualSampleFormat;
-        const int32_t bytesPerSample = (sf == 3) ? 4 : 2;
+        const int32_t bytesPerSample = (sf == 4) ? 4 : ((sf == 3) ? 4 : 2);  // F32LE=4, S32LE=4, S16LE=2
         if (bytesPerSample != 2 && bytesPerSample != 4) {
             return ctx->ring->Push(pcm, size, &ctx->cancel);
         }
@@ -1040,7 +1047,8 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             return ctx->ring->Push(pcm, size, &ctx->cancel);
         }
 
-        if (ch < 1 || ch > 8) {
+        if (ch != 1 && ch != 2) {
+            // Only stereo/mono are supported for per-ear compensation.
             return ctx->ring->Push(pcm, size, &ctx->cancel);
         }
 
@@ -1091,6 +1099,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         float norm = 1.0f;
         float denorm = 1.0f;
         if (bytesPerSample == 2) {
+            // S16LE
             norm = 1.0f / 32768.0f;
             denorm = 32768.0f;
 
@@ -1098,6 +1107,14 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             for (size_t i = 0; i < sampleCount; i++) {
                 ctx->dspScratchF[i] = static_cast<float>(in[i]) * norm;
             }
+        } else if (sf == 4) {
+            // F32LE: already in float format, just copy
+            const float* in = reinterpret_cast<const float*>(pcm);
+            for (size_t i = 0; i < sampleCount; i++) {
+                ctx->dspScratchF[i] = in[i];
+            }
+            // No denorm needed for F32LE
+            denorm = 1.0f;
         } else {
             // S32LE: use global persistent maxAbs for stable normalization.
             // This prevents "volume rollercoaster" when source data scale is ambiguous.
@@ -1185,6 +1202,7 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
         ctx->limiter.ProcessFloat(ctx->dspScratchF.data(), frameCount);
 
         if (bytesPerSample == 2) {
+            // S16LE output
             ctx->eqScratch16.resize(sampleCount);
             for (size_t i = 0; i < sampleCount; i++) {
                 float v = ctx->dspScratchF[i] * denorm;
@@ -1195,6 +1213,12 @@ void ExecutePcmStreamDecode(napi_env /*env*/, void *data) {
             return ctx->ring->Push(reinterpret_cast<const uint8_t *>(ctx->eqScratch16.data()), size, &ctx->cancel);
         }
 
+        if (sf == 4) {
+            // F32LE output: directly use the float scratch buffer
+            return ctx->ring->Push(reinterpret_cast<const uint8_t *>(ctx->dspScratchF.data()), size, &ctx->cancel);
+        }
+
+        // S32LE output
         ctx->eqScratch32.resize(sampleCount);
         for (size_t i = 0; i < sampleCount; i++) {
             double v = static_cast<double>(ctx->dspScratchF[i]) * static_cast<double>(denorm);

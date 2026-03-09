@@ -306,8 +306,8 @@ struct Index {
     if (targetUrl === "test") {
       try {
         const ctx = getContext(this) as common.UIAbilityContext;
-        const fileData = await ctx.resourceManager.getRawFileContent("test.flac");
-        const tempPath = ctx.filesDir + "/temp_input.flac";
+        const fileData = await ctx.resourceManager.getRawFileContent("test.wav");
+        const tempPath = ctx.filesDir + "/temp_input.wav";
         const file = fs.openSync(tempPath, fs.OpenMode.CREATE | fs.OpenMode.WRITE_ONLY);
         fs.writeSync(file.fd, fileData.buffer);
         fs.closeSync(file);
@@ -344,6 +344,7 @@ struct Index {
       const decoder = this.decoderTool.createStreamDecoder(
         targetUrl,
         {
+          ringBytes: 10240 * 1024,
           eqEnabled: true,
           eqGainsDb: [...this.eqGainsUnified],
         },
@@ -353,7 +354,7 @@ struct Index {
       this.currentDecoder = decoder;
       const info = await decoder.ready;
       this.durationMs = info.durationMs ?? 0;
-      this.status = `播放中: ${info.sampleRate}Hz，${info.sampleFormatCode}`;
+      this.status = `播放中: ${info.sampleRate}Hz，${info.sampleFormatCode}，${info.channelCount}ch`;
 
       this.player.setOnTimeUpdate((pos) => {
         if (!this.isDraggingSeek) this.currentPosMs = pos;
